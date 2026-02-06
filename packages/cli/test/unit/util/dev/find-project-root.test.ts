@@ -1,6 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { vol, type fs } from 'memfs';
-import { findProjectRoot } from '../../../../src/util/dev/find-project-root';
+import {
+  findProjectRoot,
+  resolveProjectCwd,
+} from '../../../../src/util/projects/find-project-root';
+import {
+  isExperimentalServicesEnabled,
+  tryDetectServices,
+} from '../../../../src/util/projects/detect-services';
 
 vi.mock('fs/promises', async () => {
   const memfs: { fs: typeof fs } = await vi.importActual('memfs');
@@ -20,6 +27,11 @@ vi.mock('fs-extra', async () => {
     },
   };
 });
+
+vi.mock('../../../../src/util/projects/detect-services', () => ({
+  isExperimentalServicesEnabled: vi.fn(() => false),
+  tryDetectServices: vi.fn(() => null),
+}));
 
 describe('findProjectRoot', () => {
   beforeEach(() => {
@@ -84,5 +96,72 @@ describe('findProjectRoot', () => {
     const result = await findProjectRoot('/some/deep/path');
 
     expect(result).toBe(null);
+  });
+});
+
+describe('resolveProjectCwd', () => {
+  const mockedIsEnabled = vi.mocked(isExperimentalServicesEnabled);
+  const mockedTryDetect = vi.mocked(tryDetectServices);
+
+  beforeEach(() => {
+    vol.reset();
+    mockedIsEnabled.mockReturnValue(false);
+    mockedTryDetect.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vol.reset();
+  });
+
+  it('should return cwd unchanged when feature flag is off', async () => {
+    mockedIsEnabled.mockReturnValue(false);
+
+    const result = await resolveProjectCwd('/project/services/api');
+
+    expect(result).toBe('/project/services/api');
+  });
+
+  it('should return project root when flag is on and services detected', async () => {
+    mockedIsEnabled.mockReturnValue(true);
+    mockedTryDetect.mockResolvedValue({
+      services: [{ name: 'api', slug: 'api', directory: 'services/api' }],
+    } as any);
+
+    vol.fromJSON({
+      '/project/.vercel/project.json': '{}',
+      '/project/services/api/package.json': '{}',
+    });
+
+    const result = await resolveProjectCwd('/project/services/api');
+
+    expect(result).toBe('/project');
+  });
+
+  it('should return original cwd when flag is on but no services found', async () => {
+    mockedIsEnabled.mockReturnValue(true);
+    mockedTryDetect.mockResolvedValue({
+      services: [],
+    } as any);
+
+    vol.fromJSON({
+      '/project/.vercel/project.json': '{}',
+      '/project/services/api/package.json': '{}',
+    });
+
+    const result = await resolveProjectCwd('/project/services/api');
+
+    expect(result).toBe('/project/services/api');
+  });
+
+  it('should return original cwd when no project root found', async () => {
+    mockedIsEnabled.mockReturnValue(true);
+
+    vol.fromJSON({
+      '/some/deep/path/package.json': '{}',
+    });
+
+    const result = await resolveProjectCwd('/some/deep/path');
+
+    expect(result).toBe('/some/deep/path');
   });
 });

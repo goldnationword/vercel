@@ -22,7 +22,7 @@ import {
   isExperimentalServicesEnabled,
 } from '../../util/projects/detect-services';
 import { displayDetectedServices } from '../../util/input/display-services';
-import { findProjectRoot } from '../../util/dev/find-project-root';
+import { resolveProjectCwd } from '../../util/projects/find-project-root';
 
 type Options = {
   '--listen': string;
@@ -39,21 +39,7 @@ export default async function dev(
   let cwd = resolve(dir);
   const listen = parseListen(opts['--listen'] || '3000');
 
-  // In multi-service mode we want to make sure, that we start
-  // from the project root and not from a service directory.
-  if (isExperimentalServicesEnabled()) {
-    const projectRoot = await findProjectRoot(cwd);
-
-    if (projectRoot && projectRoot !== cwd) {
-      const result = await tryDetectServices(projectRoot);
-
-      // If we found a different root and there are services there, then switch
-      if (result && result.services.length > 0) {
-        output.debug(`Running from project root: ${chalk.cyan(projectRoot)}`);
-        cwd = projectRoot;
-      }
-    }
-  }
+  cwd = await resolveProjectCwd(cwd);
 
   // retrieve dev command
   let link = await getLinkedProject(client, cwd);

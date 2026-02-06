@@ -3,6 +3,7 @@ import setupAndLink from '../link/setup-and-link';
 import param from '../output/param';
 import { getCommandName } from '../pkg-name';
 import { getLinkedProject } from '../projects/link';
+import { resolveProjectCwd } from '../projects/find-project-root';
 import type { SetupAndLinkOptions } from '../link/setup-and-link';
 import type { ProjectLinked } from '@vercel-internals/types';
 import output from '../../output-manager';
@@ -28,6 +29,8 @@ export async function ensureLink(
   cwd: string,
   opts: SetupAndLinkOptions = {}
 ): Promise<ProjectLinked | number> {
+  cwd = await resolveProjectCwd(cwd);
+
   let { link } = opts;
   if (!link) {
     link = await getLinkedProject(client, cwd);
