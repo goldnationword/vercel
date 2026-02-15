@@ -235,6 +235,22 @@ describe('integration add (auto-provision)', () => {
           key: 'argument:integration',
           value: 'acme',
         },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining('"plan_selection_method":"server_default"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_completed',
+          value: expect.stringContaining('"resource_id":"resource_123"'),
+        },
       ]);
     });
 
@@ -266,6 +282,22 @@ describe('integration add (auto-provision)', () => {
         {
           key: 'argument:integration',
           value: 'acme',
+        },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining('"plan_selection_method":"server_default"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_completed',
+          value: expect.stringContaining('"resource_id":"resource_123"'),
         },
       ]);
     });
@@ -420,6 +452,153 @@ describe('integration add (auto-provision)', () => {
         JSON.stringify({ version: '5.4', region: 'pdx1' })
       );
       expect(parsed.searchParams.get('source')).toEqual('cli');
+    });
+
+    it('should track web_fallback telemetry with auto_provision_result_kind for metadata fallback', async () => {
+      useAutoProvision({ responseKey: 'metadata' });
+
+      client.setArgv('integration', 'add', 'acme');
+      const exitCodePromise = integrationCommand(client);
+
+      await expect(client.stderr).toOutput(
+        'Additional setup required. Opening browser...'
+      );
+
+      await exitCodePromise;
+
+      expect(client.telemetryEventStore).toHaveTelemetryEvents([
+        {
+          key: 'subcommand:add',
+          value: 'add',
+        },
+        {
+          key: 'argument:integration',
+          value: 'acme',
+        },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining('"plan_selection_method":"server_default"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_install_flow_web_fallback',
+          value: expect.stringContaining('"reason":"metadata_required"'),
+        },
+      ]);
+      // Also verify specific fields in the web_fallback event
+      const fallbackEvent = client.telemetryEventStore.readonlyEvents.find(
+        e => e.key === 'output:marketplace_install_flow_web_fallback'
+      );
+      expect(fallbackEvent?.value).toContain('"auto_provision_result_kind":"metadata"');
+      expect(fallbackEvent?.value).toContain('"attempted_policy_retry":false');
+    });
+
+    it('should track web_fallback telemetry with API reason for unknown result kind', async () => {
+      useAutoProvision({ responseKey: 'unknown' });
+
+      client.setArgv('integration', 'add', 'acme');
+      const exitCodePromise = integrationCommand(client);
+
+      await expect(client.stderr).toOutput(
+        'Additional setup required. Opening browser...'
+      );
+
+      await exitCodePromise;
+
+      expect(client.telemetryEventStore).toHaveTelemetryEvents([
+        {
+          key: 'subcommand:add',
+          value: 'add',
+        },
+        {
+          key: 'argument:integration',
+          value: 'acme',
+        },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining('"plan_selection_method":"server_default"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_install_flow_web_fallback',
+          value: expect.stringContaining('"reason":"no_eligible_plan"'),
+        },
+      ]);
+      // Also verify specific fields in the web_fallback event
+      const fallbackEvent = client.telemetryEventStore.readonlyEvents.find(
+        e => e.key === 'output:marketplace_install_flow_web_fallback'
+      );
+      expect(fallbackEvent?.value).toContain('"auto_provision_result_kind":"unknown"');
+      expect(fallbackEvent?.value).toContain('"auto_provision_result_reason":"no_eligible_plan"');
+      expect(fallbackEvent?.value).toContain('"attempted_policy_retry":false');
+    });
+
+    it('should track attempted_policy_retry:true when fallback after policy retry', async () => {
+      useAutoProvision({
+        responseKey: 'install',
+        secondResponseKey: 'metadata',
+      });
+
+      client.setArgv('integration', 'add', 'acme');
+      const exitCodePromise = integrationCommand(client);
+
+      await expect(client.stderr).toOutput('Accept privacy policy?');
+      client.stdin.write('y\n');
+
+      await expect(client.stderr).toOutput('Accept terms of service?');
+      client.stdin.write('y\n');
+
+      await expect(client.stderr).toOutput(
+        'Additional setup required. Opening browser...'
+      );
+
+      await exitCodePromise;
+
+      expect(client.telemetryEventStore).toHaveTelemetryEvents([
+        {
+          key: 'subcommand:add',
+          value: 'add',
+        },
+        {
+          key: 'argument:integration',
+          value: 'acme',
+        },
+        {
+          key: 'output:marketplace_install_flow_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_checkout_plan_selected',
+          value: expect.stringContaining('"plan_selection_method":"server_default"'),
+        },
+        {
+          key: 'output:marketplace_checkout_provisioning_started',
+          value: expect.stringContaining('"integration_slug":"acme"'),
+        },
+        {
+          key: 'output:marketplace_install_flow_web_fallback',
+          value: expect.stringContaining('"reason":"metadata_required"'),
+        },
+      ]);
+      // Also verify attempted_policy_retry in the web_fallback event
+      const fallbackEvent = client.telemetryEventStore.readonlyEvents.find(
+        e => e.key === 'output:marketplace_install_flow_web_fallback'
+      );
+      expect(fallbackEvent?.value).toContain('"attempted_policy_retry":true');
     });
 
     it('should open browser for unknown fallback without metadata in URL', async () => {

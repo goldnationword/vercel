@@ -239,6 +239,14 @@ describe('integration', () => {
               key: 'argument:integration',
               value: 'acme',
             },
+            {
+              key: 'output:marketplace_install_flow_started',
+              value: expect.stringContaining('"integration_slug":"acme"') as unknown as string,
+            },
+            {
+              key: 'output:marketplace_install_flow_web_fallback',
+              value: expect.stringContaining('"reason":"no_installation"') as unknown as string,
+            },
           ]);
         });
 
@@ -1170,6 +1178,62 @@ describe('integration', () => {
             usePreauthorization();
           });
 
+          it('should track web_fallback telemetry with billing_plan_type for non-subscription plan', async () => {
+            useProject({
+              ...defaultProject,
+              id: 'vercel-integration-add',
+              name: 'vercel-integration-add',
+            });
+            const cwd = setupUnitFixture('vercel-integration-add');
+            client.cwd = cwd;
+            client.setArgv('integration', 'add', 'acme-prepayment');
+            const exitCodePromise = integrationCommand(client);
+            await expect(client.stderr).toOutput(
+              'Choose your region (Use arrow keys)'
+            );
+            client.stdin.write('\n');
+            await expect(client.stderr).toOutput(
+              'Choose a billing plan (Use arrow keys)'
+            );
+            client.stdin.write('\n');
+            await expect(client.stderr).toOutput(
+              'You have selected a plan that cannot be provisioned through the CLI. Open \nVercel Dashboard?'
+            );
+            client.stdin.write('Y\n');
+            await exitCodePromise;
+
+            expect(client.telemetryEventStore).toHaveTelemetryEvents([
+              {
+                key: 'subcommand:add',
+                value: 'add',
+              },
+              {
+                key: 'argument:integration',
+                value: 'acme-prepayment',
+              },
+              {
+                key: 'output:marketplace_install_flow_started',
+                value: expect.stringContaining('"integration_slug":"acme-prepayment"') as unknown as string,
+              },
+              {
+                key: 'output:marketplace_checkout_plan_selected',
+                value: expect.stringContaining('"plan_selection_method":"interactive"') as unknown as string,
+              },
+              {
+                key: 'output:marketplace_install_flow_web_fallback',
+                value: expect.stringContaining(
+                  '"reason":"non_subscription_plan"'
+                ) as unknown as string,
+              },
+            ]);
+            // Also verify specific fields in the web_fallback event
+            const fallbackEvent = client.telemetryEventStore.readonlyEvents.find(
+              e => e.key === 'output:marketplace_install_flow_web_fallback'
+            );
+            expect(fallbackEvent?.value).toContain('"billing_plan_type":');
+            expect(fallbackEvent?.value).toContain('"billing_plan_id":');
+          });
+
           it('should include planId in web UI URL for non-subscription plan with --plan', async () => {
             client.setArgv(
               'integration',
@@ -1469,6 +1533,22 @@ describe('integration', () => {
             {
               key: 'argument:integration',
               value: 'acme',
+            },
+            {
+              key: 'output:marketplace_install_flow_started',
+              value: expect.stringContaining('"integration_slug":"acme"') as unknown as string,
+            },
+            {
+              key: 'output:marketplace_checkout_plan_selected',
+              value: expect.stringContaining('"plan_selection_method":"interactive"') as unknown as string,
+            },
+            {
+              key: 'output:marketplace_checkout_provisioning_started',
+              value: expect.stringContaining('"integration_slug":"acme"') as unknown as string,
+            },
+            {
+              key: 'output:marketplace_checkout_provisioning_completed',
+              value: expect.stringContaining('"resource_id"') as unknown as string,
             },
           ]);
         });

@@ -199,6 +199,13 @@ export interface AutoProvisionedResponse {
 
 export interface AutoProvisionFallback {
   kind: 'install' | 'metadata' | 'unknown';
+  reason?:
+    | 'installation_only'
+    | 'no_eligible_plan'
+    | 'preauthorization_required'
+    | 'payment_method_required'
+    | 'error';
+  error_message?: string;
   url: string;
   integration: AutoProvisionIntegration;
   product: AutoProvisionProduct;

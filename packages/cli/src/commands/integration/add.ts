@@ -31,7 +31,10 @@ import { fetchInstallations } from '../../util/integration/fetch-installations';
 import { fetchIntegrationWithTelemetry } from '../../util/integration/fetch-integration';
 import { selectProduct } from '../../util/integration/select-product';
 import output from '../../output-manager';
-import { IntegrationAddTelemetryClient } from '../../util/telemetry/commands/integration/add';
+import {
+  IntegrationAddTelemetryClient,
+  type MarketplaceEventProperties,
+} from '../../util/telemetry/commands/integration/add';
 import { createAuthorization } from '../../util/integration/create-authorization';
 import sleep from '../../util/sleep';
 import { fetchAuthorization } from '../../util/integration/fetch-authorization';
@@ -170,6 +173,19 @@ export async function add(
     | IntegrationInstallation
     | undefined;
 
+  const marketplaceProps: MarketplaceEventProperties = {
+    integration_id: integration.id,
+    integration_slug: integration.slug,
+    integration_name: integration.name,
+    product_id: product.id,
+    product_slug: product.slug,
+    team_slug: team.slug,
+    is_from_cli: true,
+    is_cli_auto_provision: false,
+  };
+
+  telemetry.trackInstallFlowStarted(marketplaceProps);
+
   output.log(
     `Installing ${chalk.bold(product.name)} by ${chalk.bold(integration.name)} under ${chalk.bold(contextName)}`
   );
@@ -209,6 +225,11 @@ export async function add(
     installation && (parsedMetadata || metadataWizard.isSupported);
 
   if (!provisionResourceViaCLIIsSupported) {
+    telemetry.trackInstallFlowWebFallback({
+      ...marketplaceProps,
+      reason: !installation ? 'no_installation' : 'unsupported_wizard',
+    });
+
     const projectLink = await getLinkedProjectField(
       client,
       options.noConnect,
@@ -251,7 +272,9 @@ export async function add(
     resourceName,
     parsedMetadata,
     billingPlanId,
-    options
+    options,
+    telemetry,
+    marketplaceProps
   );
 }
 
@@ -298,7 +321,9 @@ async function provisionResourceViaCLI(
   name: string,
   parsedMetadata?: Metadata,
   billingPlanId?: string,
-  options: AddOptions = {}
+  options: AddOptions = {},
+  telemetry?: IntegrationAddTelemetryClient,
+  marketplaceProps?: MarketplaceEventProperties
 ) {
   // Get metadata from flags, wizard, or hybrid
   let metadata: Metadata;
@@ -373,8 +398,25 @@ async function provisionResourceViaCLI(
     return 1;
   }
 
+  if (marketplaceProps && telemetry) {
+    telemetry.trackCheckoutPlanSelected({
+      ...marketplaceProps,
+      billing_plan_id: billingPlan.id,
+      plan_selection_method: billingPlanId ? 'cli_flag' : 'interactive',
+    });
+  }
+
   if (billingPlan.type !== 'subscription') {
     // offer to open the web UI to continue the resource provisioning
+    if (marketplaceProps && telemetry) {
+      telemetry.trackInstallFlowWebFallback({
+        ...marketplaceProps,
+        reason: 'non_subscription_plan',
+        billing_plan_id: billingPlan.id,
+        billing_plan_type: billingPlan.type,
+      });
+    }
+
     const projectLink = await getLinkedProjectField(
       client,
       options.noConnect,
@@ -435,7 +477,9 @@ async function provisionResourceViaCLI(
       billingPlan,
       authorizationId,
       contextName,
-      options
+      options,
+      telemetry,
+      marketplaceProps
     );
   } catch (error) {
     output.error((error as Error).message);
@@ -630,8 +674,14 @@ async function provisionStorageProduct(
   billingPlan: BillingPlan,
   authorizationId: string,
   contextName: string,
-  options: AddOptions = {}
+  options: AddOptions = {},
+  telemetry?: IntegrationAddTelemetryClient,
+  marketplaceProps?: MarketplaceEventProperties
 ) {
+  if (marketplaceProps && telemetry) {
+    telemetry.trackCheckoutProvisioningStarted(marketplaceProps);
+  }
+
   output.spinner('Provisioning resource...');
   let storeId: string;
   try {
@@ -646,6 +696,12 @@ async function provisionStorageProduct(
     );
     storeId = result.store.id;
   } catch (error) {
+    if (marketplaceProps && telemetry) {
+      telemetry.trackCheckoutProvisioningFailed({
+        ...marketplaceProps,
+        error_message: (error as Error).message,
+      });
+    }
     output.error(
       `Failed to provision ${product.name}: ${(error as Error).message}`
     );
@@ -653,7 +709,28 @@ async function provisionStorageProduct(
   } finally {
     output.stopSpinner();
   }
+
+  if (marketplaceProps && telemetry) {
+    telemetry.trackCheckoutProvisioningCompleted({
+      ...marketplaceProps,
+      resource_id: storeId,
+      resource_name: name,
+    });
+  }
+
   output.log(`${product.name} successfully provisioned: ${chalk.bold(name)}`);
 
-  return postProvisionSetup(client, name, storeId, contextName, options);
+  return postProvisionSetup(client, name, storeId, contextName, {
+    ...options,
+    onProjectConnected:
+      marketplaceProps && telemetry
+        ? (projectId: string) => {
+            telemetry.trackProjectConnected({
+              ...marketplaceProps,
+              project_id: projectId,
+              resource_id: storeId,
+            });
+          }
+        : undefined,
+  });
 }
